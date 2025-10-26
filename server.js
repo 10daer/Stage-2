@@ -125,8 +125,8 @@ async function generateSummaryImage(totalCountries, topCountries, timestamp) {
   await fs.writeFile(path.join(__dirname, "cache", "summary.png"), buffer);
 }
 
-// GET /countries/refresh
-app.get("/countries/refresh", async (req, res) => {
+// POST /countries/refresh
+app.post("/countries/refresh", async (req, res) => {
   try {
     // Check if we already have data in the database
     const [countResult] = await pool.query(
@@ -185,8 +185,8 @@ app.get("/countries/refresh", async (req, res) => {
   }
 });
 
-// POST /countries/refresh
-app.post("/countries/refresh", async (req, res) => {
+// GET /countries/refresh
+app.get("/countries/refresh", async (req, res) => {
   try {
     // Check if we already have data in the database
     const [countResult] = await pool.query(
