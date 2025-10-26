@@ -416,6 +416,22 @@ app.get("/countries/image", async (req, res) => {
   }
 });
 
+// GET /
+app.get("/", (req, res) => {
+  res.json({
+    message: "Welcome to the Countries API",
+    endpoints: {
+      "POST /countries/refresh": "Refresh countries data from external API",
+      "GET /countries":
+        "Get all countries (supports filters: region, currency, sort)",
+      "GET /countries/:name": "Get a specific country by name",
+      "DELETE /countries/:name": "Delete a country by name",
+      "GET /status": "Get API status and metadata",
+      "GET /countries/image": "Get summary image",
+    },
+  });
+});
+
 // Start server
 const PORT = process.env.PORT || 3000;
 
