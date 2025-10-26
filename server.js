@@ -125,6 +125,66 @@ async function generateSummaryImage(totalCountries, topCountries, timestamp) {
   await fs.writeFile(path.join(__dirname, "cache", "summary.png"), buffer);
 }
 
+// GET /countries/refresh
+app.get("/countries/refresh", async (req, res) => {
+  try {
+    // Check if we already have data in the database
+    const [countResult] = await pool.query(
+      "SELECT COUNT(*) as total FROM countries"
+    );
+    const currentCount = countResult[0].total;
+
+    // If we have 250 countries, respond immediately without refreshing
+    if (currentCount >= 250) {
+      const [metadata] = await pool.query(
+        "SELECT last_refreshed_at FROM refresh_metadata WHERE id = 1"
+      );
+
+      return res.json({
+        message: "Countries data already up to date",
+        total_countries: currentCount,
+        last_refreshed_at: metadata[0].last_refreshed_at,
+      });
+    }
+
+    // If we have some data, respond immediately and refresh in background
+    if (currentCount > 0) {
+      const [metadata] = await pool.query(
+        "SELECT last_refreshed_at FROM refresh_metadata WHERE id = 1"
+      );
+
+      // Send response immediately
+      res.json({
+        message: "Countries data refresh started in background",
+        total_countries: currentCount,
+        last_refreshed_at: metadata[0].last_refreshed_at,
+      });
+
+      // Continue refresh in background (don't await)
+      performRefresh().catch((err) =>
+        console.error("Background refresh error:", err)
+      );
+      return;
+    }
+
+    // No data exists, perform synchronous refresh
+    await performRefresh();
+
+    const [finalMetadata] = await pool.query(
+      "SELECT total_countries, last_refreshed_at FROM refresh_metadata WHERE id = 1"
+    );
+
+    res.json({
+      message: "Countries data refreshed successfully",
+      total_countries: finalMetadata[0].total_countries,
+      last_refreshed_at: finalMetadata[0].last_refreshed_at,
+    });
+  } catch (error) {
+    console.error("Refresh error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // POST /countries/refresh
 app.post("/countries/refresh", async (req, res) => {
   try {
@@ -341,25 +401,6 @@ app.get("/countries", async (req, res) => {
   }
 });
 
-// GET /countries/:name
-app.get("/countries/:name", async (req, res) => {
-  try {
-    const [countries] = await pool.query(
-      "SELECT * FROM countries WHERE LOWER(name) = LOWER(?)",
-      [req.params.name]
-    );
-
-    if (countries.length === 0) {
-      return res.status(404).json({ error: "Country not found" });
-    }
-
-    res.json(countries[0]);
-  } catch (error) {
-    console.error("Get country error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
 // DELETE /countries/:name
 app.delete("/countries/:name", async (req, res) => {
   try {
@@ -430,6 +471,25 @@ app.get("/", (req, res) => {
       "GET /countries/image": "Get summary image",
     },
   });
+});
+
+// GET /countries/:name
+app.get("/countries/:name", async (req, res) => {
+  try {
+    const [countries] = await pool.query(
+      "SELECT * FROM countries WHERE LOWER(name) = LOWER(?)",
+      [req.params.name]
+    );
+
+    if (countries.length === 0) {
+      return res.status(404).json({ error: "Country not found" });
+    }
+
+    res.json(countries[0]);
+  } catch (error) {
+    console.error("Get country error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 // Start server
