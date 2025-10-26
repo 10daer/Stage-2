@@ -127,25 +127,82 @@ async function generateSummaryImage(totalCountries, topCountries, timestamp) {
 
 // POST /countries/refresh
 app.post("/countries/refresh", async (req, res) => {
+  try {
+    // Check if we already have data in the database
+    const [countResult] = await pool.query(
+      "SELECT COUNT(*) as total FROM countries"
+    );
+    const currentCount = countResult[0].total;
+
+    // If we have 250 countries, respond immediately without refreshing
+    if (currentCount >= 250) {
+      const [metadata] = await pool.query(
+        "SELECT last_refreshed_at FROM refresh_metadata WHERE id = 1"
+      );
+
+      return res.json({
+        message: "Countries data already up to date",
+        total_countries: currentCount,
+        last_refreshed_at: metadata[0].last_refreshed_at,
+      });
+    }
+
+    // If we have some data, respond immediately and refresh in background
+    if (currentCount > 0) {
+      const [metadata] = await pool.query(
+        "SELECT last_refreshed_at FROM refresh_metadata WHERE id = 1"
+      );
+
+      // Send response immediately
+      res.json({
+        message: "Countries data refresh started in background",
+        total_countries: currentCount,
+        last_refreshed_at: metadata[0].last_refreshed_at,
+      });
+
+      // Continue refresh in background (don't await)
+      performRefresh().catch((err) =>
+        console.error("Background refresh error:", err)
+      );
+      return;
+    }
+
+    // No data exists, perform synchronous refresh
+    await performRefresh();
+
+    const [finalMetadata] = await pool.query(
+      "SELECT total_countries, last_refreshed_at FROM refresh_metadata WHERE id = 1"
+    );
+
+    res.json({
+      message: "Countries data refreshed successfully",
+      total_countries: finalMetadata[0].total_countries,
+      last_refreshed_at: finalMetadata[0].last_refreshed_at,
+    });
+  } catch (error) {
+    console.error("Refresh error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Separate function for the actual refresh logic
+async function performRefresh() {
   const connection = await pool.getConnection();
 
   try {
-    // Fetch countries data
-    const countriesResponse = await axios.get(
-      "https://restcountries.com/v2/all?fields=name,capital,region,population,flag,currencies",
-      { timeout: 10000 }
-    );
+    await connection.beginTransaction();
 
-    // Fetch exchange rates
-    const ratesResponse = await axios.get(
-      "https://open.er-api.com/v6/latest/USD",
-      { timeout: 10000 }
-    );
+    // Fetch countries data and exchange rates concurrently
+    const [countriesResponse, ratesResponse] = await Promise.all([
+      axios.get(
+        "https://restcountries.com/v2/all?fields=name,capital,region,population,flag,currencies",
+        { timeout: 10000 }
+      ),
+      axios.get("https://open.er-api.com/v6/latest/USD", { timeout: 10000 }),
+    ]);
 
     const countries = countriesResponse.data;
     const rates = ratesResponse.data.rates;
-
-    await connection.beginTransaction();
 
     for (const country of countries) {
       let currencyCode = null;
@@ -234,35 +291,13 @@ app.post("/countries/refresh", async (req, res) => {
       topCountries,
       metadata[0].last_refreshed_at
     );
-
-    res.json({
-      message: "Countries data refreshed successfully",
-      total_countries: totalCountries,
-      last_refreshed_at: metadata[0].last_refreshed_at,
-    });
   } catch (error) {
     await connection.rollback();
-
-    if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") {
-      return res.status(503).json({
-        error: "External data source unavailable",
-        details: "Request timeout - external API did not respond in time",
-      });
-    }
-
-    if (error.response) {
-      return res.status(503).json({
-        error: "External data source unavailable",
-        details: `Could not fetch data from ${error.config.url}`,
-      });
-    }
-
-    console.error("Refresh error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    throw error;
   } finally {
     connection.release();
   }
-});
+}
 
 // GET /countries
 app.get("/countries", async (req, res) => {
